@@ -194,7 +194,7 @@ static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, Postg
 		auto scale = (((atttypmod - sizeof(int32_t)) & 0x7ff) ^ 1024) - 1024;
 		return LogicalType::DECIMAL(width, scale);
 	} else if (pgtypename == "char" || pgtypename == "bpchar" || pgtypename == "varchar" || pgtypename == "text" ||
-	           pgtypename == "jsonb" || pgtypename == "json") {
+	           pgtypename == "jsonb" || pgtypename == "json" || pgtypename == "macaddr") {
 		return LogicalType::VARCHAR;
 	} else if (pgtypename == "date") {
 		return LogicalType::DATE;
@@ -670,6 +670,26 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 				throw NotImplementedException("JSONB version number mismatch, expected 1, got %d", version);
 			}
 		}
+		if (type_info->typname =="macaddr")
+               
+		            {
+                    int8_t macaddr_buffer_outlength = 12;
+                        
+                    if (value_len !=  sizeof(uint8_t) * 6) {
+                            throw InvalidInputException("Need at least 6 bytes to read a Postgres macaddr. Got %d", value_len);
+                            }
+                    char outputstring[macaddr_buffer_outlength];  // 6 BYTES * 2  is total VARCHAR, no null as snprintf is used
+                        /* pointer to the first item (0 index) of the output array */
+                    char *ptr = &outputstring[0];
+                    for (int8_t i = 0; i < 6; i++) {
+                        /* "snprintf" converts each byte in (char *)value_ptr[i]  into a 2 hex string
+                        * characters  example 0x00 => "00" , 0x0A => "0A" .
+                        */
+                        ptr += snprintf(ptr, macaddr_buffer_outlength, "%02X", (char *)value_ptr[i]);
+		                }
+		        FlatVector::GetData<string_t>(out_vec)[output_offset] = StringVector::AddStringOrBlob(out_vec,outputstring,macaddr_buffer_outlength);
+		    break;
+        }
 		FlatVector::GetData<string_t>(out_vec)[output_offset] =
 		    StringVector::AddStringOrBlob(out_vec, (char *)value_ptr, value_len);
 		break;
@@ -821,9 +841,9 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		D_ASSERT(value_oid == typelem);
 		auto array_length = LoadEndIncrement<uint32_t>(value_ptr);
 		auto array_dim = LoadEndIncrement<uint32_t>(value_ptr);
-		if (array_dim != 1) {
-			throw NotImplementedException("Only one-dimensional Postgres arrays are supported %u %u ", array_length,
-			                              array_dim);
+		if (flag_one > 1) {
+			throw NotImplementedException("Only one-dimensional Postgres arrays are supported %u ",flag_one);
+			                             
 		}
 
 		auto &child_vec = ListVector::GetEntry(out_vec);
