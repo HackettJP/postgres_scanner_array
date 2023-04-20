@@ -15,6 +15,92 @@
 #include "duckdb/planner/filter/constant_filter.hpp"
 
 using namespace duckdb;
+char *asciidisplay(const int code, char buffer[5])
+{
+    if (code < 0)
+        buffer[0] = '\0';
+    else
+    if (code < 32) {
+        buffer[0] = '\\';
+        if (code >= 7 && code <= 13) {
+            static const char control[8] = "abtnvfr";
+            buffer[1] = control[code - 7];
+            buffer[2] = '\0';
+        } else {
+            buffer[1] = '0';
+            buffer[2] = '0' + (code / 8);
+            buffer[3] = '0' + (code % 8);
+            buffer[4] = '\0';
+        }
+    } else
+    if (code < 127) {
+        buffer[0] = code;
+        buffer[1] = '\0';
+    } else
+    if (code < 256) {
+        buffer[0] = '\\';
+        buffer[1] = '0' + ((code / 64) % 8);
+        buffer[2] = '0' + ((code / 8) % 8);
+        buffer[3] = '0' + (code % 8);
+        buffer[4] = '\0';
+    } else
+        buffer[0] = '\0';
+ 
+    return (char *)buffer;
+}
+
+void HexAsciiDump(unsigned char *buf, size_t size) 
+{
+    char astra[5];
+    size_t pos,col;
+    pos = 0;
+
+    printf("\n-==\n");
+    for (size_t i = 0; i < size; ++i) 
+    {                
+        
+         printf("%02X ", buf[i]);
+        
+        if ((i+1) % 8 == 0 || i+1 == size ) // || divisable by 8 reminder 0 or size at end of buffer then 
+        {
+            printf(" ");
+            if ((i+1) % 16 == 0)   // if we on position 16 then add break then produce text
+                {
+                printf("| ");
+                for (col = 0 ; col < 16; ++col)  // do display of the single characters
+                    { 
+                    printf("%5s ",asciidisplay(buf[pos], astra));
+                    pos++;
+                    } 
+                   printf("\n");
+                }
+            else if (i+1 == size)
+                {
+                    if ((i+1) % 16 <= 8)
+                    {
+                    printf(" ");
+                    }
+                    for (col = (i+1) % 16; col < 16; ++col)  // make extra spaces to pad to "|"
+                    {
+                    printf("   ");
+                    }
+                
+                printf("| ");
+
+                    for (col = pos ; col < size; ++col)
+                    {
+                   
+                    printf("%5s ",asciidisplay(buf[pos], astra));
+                    pos++;
+                    }
+                printf("\n");  
+                } 
+                    
+        }
+
+    }
+printf("-==");
+}
 
 struct PostgresTypeInfo {
 	string typname;
@@ -671,14 +757,14 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 			}
 		}
 		if (type_info->typname =="macaddr")
-               
+               /// 48bit mac address should specify a type 48 and 64 bit old mac format and new 
 		            {
-                    int8_t macaddr_buffer_outlength = 12;
+                    int8_t macaddr_buffer_outlength = 12; // 6 BYTES * 2  is total VARCHAR, no null as snprintf is used
                         
                     if (value_len !=  sizeof(uint8_t) * 6) {
                             throw InvalidInputException("Need at least 6 bytes to read a Postgres macaddr. Got %d", value_len);
                             }
-                    char outputstring[macaddr_buffer_outlength];  // 6 BYTES * 2  is total VARCHAR, no null as snprintf is used
+                    char outputstring[macaddr_buffer_outlength];
                         /* pointer to the first item (0 index) of the output array */
                     char *ptr = &outputstring[0];
                     for (int8_t i = 0; i < 6; i++) {
@@ -819,43 +905,147 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 	}
 
 	case LogicalTypeId::LIST: {
+		uint32_t flag_one,flag_two;
+		uint32_t flag_three,flag_four;
+		int32_t  array_length,array_dim;
+		uint32_t value_oid;
+		uint32_t ntups;
+        	uint32_t internal_position; // FOR DEBUG
+		
 		D_ASSERT(elem_info);
 		auto &list_entry = FlatVector::GetData<list_entry_t>(out_vec)[output_offset];
-		auto child_offset = ListVector::GetListSize(out_vec);
-
+		
 		if (value_len < 1) {
 			list_entry.offset = ListVector::GetListSize(out_vec);
 			list_entry.length = 0;
 			break;
 		}
 		D_ASSERT(value_len >= 3 * sizeof(uint32_t));
-		auto flag_one = LoadEndIncrement<uint32_t>(value_ptr);
-		auto flag_two = LoadEndIncrement<uint32_t>(value_ptr);
+		internal_position=value_len;  // for hex dump
+		
+		flag_one = LoadEndIncrement<uint32_t>(value_ptr);
+		flag_two = LoadEndIncrement<uint32_t>(value_ptr);
+		internal_position = internal_position -8;
 		if (flag_one == 0) {
-			list_entry.offset = child_offset;
+			list_entry.offset = ListVector::GetListSize(out_vec);
 			list_entry.length = 0;
 			return;
 		}
-		// D_ASSERT(flag_two == 1); // TODO what is this?!
-		auto value_oid = LoadEndIncrement<uint32_t>(value_ptr);
+		// D_ASSERT(flag_two == 1); // // this is NULL bitmap flag  .... not relevent
+		value_oid = LoadEndIncrement<uint32_t>(value_ptr);
+		 internal_position = internal_position -4;
 		D_ASSERT(value_oid == typelem);
-		auto array_length = LoadEndIncrement<uint32_t>(value_ptr);
-		auto array_dim = LoadEndIncrement<uint32_t>(value_ptr);
-		if (flag_one > 1) {
-			throw NotImplementedException("Only one-dimensional Postgres arrays are supported %u ",flag_one);
-			                             
+       		ntups = 1;  // Use to start 1 * with ntups to get the matrix size
+	    	
+		if (flag_one > 1 ){
+			// Decode composite nested array in postgresql 
+			// required if NDIMS > 3 in future gen
+			int *dims = (int *) malloc(flag_one * sizeof(int));
+			int *lbound = (int *) malloc(flag_one * sizeof(int));
+
+			for (idx_t unpack = 1; unpack < flag_one; unpack++){
+				flag_three = (int)LoadEndIncrement<uint32_t>(value_ptr); 
+				flag_four  = (int)LoadEndIncrement<uint32_t>(value_ptr);
+                         // required if NDIMS > 3 for each  {{{layer }}} will have its own associated, ntups {{},{},{}} size
+				dims[unpack] 			= flag_three;   
+ 				lbound[unpack]			= flag_four;    
+                        	internal_position = internal_position - 8;
+                        // Total ntups calculation total arrays 
+				ntups = ntups * flag_three;  
+				}
+		auto child_offset   = ListVector::GetListSize(out_vec);
+		array_length   = LoadEndIncrement<uint32_t>(value_ptr);
+		array_dim      = LoadEndIncrement<uint32_t>(value_ptr);
+		internal_position   = internal_position-8;
+                printf("\nNdims indicator {{{..}}} no of : %u ", flag_one);
+                printf("\nNull Bitmap Flag Set           : %s ", flag_two ? "true" : "false");
+                printf("\nvalue_len                      : %u ", value_len);    
+                printf("\nvalue_oid                      : %u ", value_oid);
+                printf("\ninternal_position              : %u ", internal_position);
+                printf("\narray_length  {x,x,x..}        : %u ", array_length);  
+                printf("\narray_dim                      : %u ", array_dim);
+                printf("\nchild_offset                   : %u ", child_offset);
+                printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
+
+                if (flag_one > 2) {
+		throw NotImplementedException("more than 2-dimensional {{...}} Postgres arrays currently not supported, Detected %u dimensions", flag_one);
+		}			
+                // only added in to allow  {{ONE,TWO}} to be accepted atm translates to {ONE,TWO,THREE} output
+		if ( ntups > 1) {  // remove this for ntups working logic {{ONE,TWO,THREE},{FOUR,FIVE,SIZE}}
+		throw NotImplementedException("more than 2-dimension matrix with 1-LIST {{ONE,TWO,THREE}} currently supported, Detected %u dimensions with ntups %u ", flag_one,flag_three);
 		}
 
+                // you times ntups with array_length to get get reserve size
+                // {{x.x},{y.y}}  be described as ntups (2) array_length (2)
+                // {{x.x}}  be described as ntups (1) array_length (2)
+            
+		ListVector::Reserve(out_vec, child_offset+(array_length*ntups));
+
+               // CREATE A LOOP 
+                // type = LogicalType::LIST(child_type);
+                // Vector list_vector(type, true, false, STANDARD_VECTOR_SIZE);
+                // example {x.x.},{y.y}  be described as ntups (2) array_length (2)
+                // list_vector.entry=0 , length =2
+                // list_vector.entry=2 , length =2,
+                // list_vector.entry= ntups ; list_vector.length =array_length;
+               // END LOOP 
+                //type = LogicalType::LIST(child_type);
+                //Vector list_vector(type, true, false, STANDARD_VECTOR_SIZE);
+				
+                auto &child_vec = ListVector::GetEntry(out_vec);
+		auto &child_mask = FlatVector::Validity(child_vec);
+
+                HexAsciiDump((unsigned char *)value_ptr,internal_position); 
+		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
+			// handle NULLs again (TODO: unify this with scan)
+			auto ele_len = LoadEndIncrement<int32_t>(value_ptr);
+			if (ele_len == -1) { // NULL
+			child_mask.Set(child_offset + child_idx, false);
+			continue;
+			}	
+printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) ",child_offset+child_idx,child_offset,child_idx);
+printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x,x,x..} array.length       : %u",ele_len,array_length); 	 				
+			HexAsciiDump((unsigned char *)value_ptr,ele_len);
+                        ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,child_offset + child_idx);
+							value_ptr += ele_len;
+					}
+                ListVector::SetListSize(out_vec, child_offset + array_length);
+                list_entry.offset = child_offset;
+                list_entry.length = array_length;
+                printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u , datafield {x,x,x..} list_entry.length  : %u\n", child_offset, array_length);
+                break;
+
+		}
+
+		else
+		{
+		array_length = LoadEndIncrement<uint32_t>(value_ptr);
+		array_dim = LoadEndIncrement<uint32_t>(value_ptr);
+        	internal_position = internal_position-8;
+       		auto child_offset = ListVector::GetListSize(out_vec);
 		auto &child_vec = ListVector::GetEntry(out_vec);
+		auto &child_mask = FlatVector::Validity(child_vec);
+		printf("\nNdims indicator {{{..}}} no of : %u ", flag_one);
+		printf("\nNull Bitmap Flag Set           : %s ", flag_two ? "true" : "false");
+		printf("\nvalue_len                      : %u ", value_len);    
+		printf("\nvalue_oid                      : %u ", value_oid);
+		printf("\ninternal_position              : %u ", internal_position);
+		printf("\narray_length  {x,x,x..}        : %u ", array_length);  
+		printf("\narray_dim                      : %u ", array_dim);
+		printf("\nchild_offset                   : %u ", child_offset);
+		printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
+
+        	HexAsciiDump((unsigned char *)value_ptr,internal_position); 
 		ListVector::Reserve(out_vec, child_offset + array_length);
 		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
 			auto ele_len = LoadEndIncrement<int32_t>(value_ptr);
 			if (ele_len == -1) { // NULL
-				FlatVector::Validity(child_vec).Set(child_offset + child_idx, false);
+				child_mask.Set(child_offset + child_idx, false);
 				continue;
 			}
-
+printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u)",child_offset+child_idx,child_offset,child_idx);
+printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x,x,x..} array.length       : %u",ele_len,array_length); 		
 			ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,
 			             child_offset + child_idx);
 			value_ptr += ele_len;
@@ -864,7 +1054,9 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 
 		list_entry.offset = child_offset;
 		list_entry.length = array_length;
+printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u , datafield {x,x,x..} list_entry.length  : %u\n", child_offset, array_length);
 		break;
+		}
 	}
 
 	default:
