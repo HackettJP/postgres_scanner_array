@@ -21,14 +21,21 @@ struct PostgresTypeInfo {
 	int64_t typlen;
 	string typtype;
 	string nspname;
+	string typsend;
+	string typreceive;
 };
 
 struct PostgresColumnInfo {
 	string attname;
 	int atttypmod;
 	PostgresTypeInfo type_info;
-	int64_t typelem; // OID pointer for arrays
+	uint32_t attndims; 				// shows dimensions of array if present not enforced in catalogue only if present +1 etc
+	string	typedelim;				// delimeter  ','
+	int64_t typelem;				// OID pointer for arrays
+
 	PostgresTypeInfo elem_info;
+	uint32_t localndims = 1; 		// Used to determine dimensions in LIST Arrays default as 1
+	uint32_t nullbitmap = 0;   		// Used to determine dimensions in LIST Arrays. 
 };
 
 static constexpr uint32_t POSTGRES_TID_MAX = 4294967295;
@@ -262,20 +269,17 @@ WHERE nspname='%s' AND relname='%s'
 
 	// query the table schema so we can interpret the bits in the pages
 	// fun fact: this query also works in DuckDB ^^
-	res = PGQuery(bind_data->conn, StringUtil::Format(
-	                                   R"(
-SELECT
-    attname, atttypmod, pg_namespace.nspname,
-    pg_type.typname, pg_type.typlen, pg_type.typtype, pg_type.typelem,
-    pg_type_elem.typname elem_typname, pg_type_elem.typlen elem_typlen, pg_type_elem.typtype elem_typtype
-FROM pg_attribute
-    JOIN pg_type ON atttypid=pg_type.oid
-    LEFT JOIN pg_type pg_type_elem ON pg_type.typelem=pg_type_elem.oid
-    LEFT JOIN pg_namespace ON pg_type.typnamespace = pg_namespace.oid
-WHERE attrelid=%d AND attnum > 0
-ORDER BY attnum;
-)",
-	                                   oid));
+	
+res = PGQuery(bind_data->conn, StringUtil::Format(
+		R"(
+		SELECT attname, atttypmod, pg_namespace.nspname,pg_type.typname, pg_type.typlen, pg_type.typtype, pg_type.typelem,
+		pg_type_elem.typname elem_typname, pg_type_elem.typlen elem_typlen, pg_type_elem.typtype elem_typtype,
+		attndims, pg_type.typsend, pg_type.typreceive, pg_type.typdelim
+		FROM pg_attribute
+			JOIN pg_type ON atttypid=pg_type.oid
+				LEFT JOIN pg_type pg_type_elem ON pg_type.typelem=pg_type_elem.oid
+				LEFT JOIN pg_namespace ON pg_type.typnamespace = pg_namespace.oid
+			WHERE attrelid=%d AND attnum > 0 ORDER BY attnum;)",oid));
 
 	// can't scan a table without columns (yes those exist)
 	if (res->Count() == 0) {
@@ -284,19 +288,24 @@ ORDER BY attnum;
 
 	for (idx_t row = 0; row < res->Count(); row++) {
 		PostgresColumnInfo info;
-		info.attname = res->GetString(row, 0);
-		info.atttypmod = res->GetInt32(row, 1);
+		info.attname = res->GetString(row, 0);   		// row name
+		info.atttypmod = res->GetInt32(row, 1);  		// -1 num
 
-		info.type_info.nspname = res->GetString(row, 2);
-		info.type_info.typname = res->GetString(row, 3);
-		info.type_info.typlen = res->GetInt64(row, 4);
-		info.type_info.typtype = res->GetString(row, 5);
-		info.typelem = res->GetInt64(row, 6);
+		info.type_info.nspname 	= res->GetString(row, 2); 	// catalog name space
+		info.type_info.typname 	= res->GetString(row, 3); 	// can be dimension [] with '_' or basetype
+		info.type_info.typlen 	= res->GetInt64(row, 4);  	// small int -1
+		info.type_info.typtype 	= res->GetString(row, 5); 	// b 
+		info.typelem 			= res->GetInt64(row, 6);  // type OID 
 
-		info.elem_info.nspname = res->GetString(row, 2);
-		info.elem_info.typname = res->GetString(row, 7);
-		info.elem_info.typlen = res->GetInt64(row, 8);
-		info.elem_info.typtype = res->GetString(row, 9);
+		info.elem_info.nspname 	= res->GetString(row, 2); 	// catalog name space
+		info.elem_info.typname 	= res->GetString(row, 7); 	// base data type
+		info.elem_info.typlen 	= res->GetInt64(row, 8);  	// -1 
+		info.elem_info.typtype 	= res->GetString(row, 9); 	// b
+		// New stuff
+		info.attndims 			= res->GetInt32(row,10);					// Number of dimensions not enforced on more than 1 lata usage
+		info.type_info.typsend 		= res->GetString(row,11);  					// basetype or array_send
+		info.type_info.typreceive 	= res->GetString(row,12);  					// basetype or array_send
+		info.typedelim 			= res->GetString(row,13);  					// delimeter  ','
 
 		bind_data->names.push_back(info.attname);
 		auto duckdb_type = DuckDBType(info, bind_data->conn, context);
