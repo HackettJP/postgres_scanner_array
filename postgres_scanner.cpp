@@ -892,13 +892,14 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                 printf("\nchild_offset                   : %u ", child_offset);
                 printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
 
-                if (flag_one > 4) {
-		throw NotImplementedException("\nmore than 3-dimensional {{{...}}} Postgres arrays currently not supported, Detected %u dimensions", flag_one);
-		}					
-                // only added in to allow  {{ONE,TWO}} to be accepted atm translates to {ONE,TWO,THREE} output
-		if ( ntups > 3) {  // remove this for ntups working logic {{ONE,TWO,THREE},{FOUR,FIVE,SIZE}}
-		throw NotImplementedException("\nmore than 2-dimension matrix with 1-LIST {{ONE,TWO,THREE}} currently supported, Detected %u dimensions with ntups %u ", ndims,ntups);
-		
+                for (idx_t j = 1 ; j < flag_one; j++)
+            	{
+            	printf("\nDimension : %d  no of {},{} in that dimension-level dims value  : %d , lbound value : %d",j, dims[j],lbound[j])   ;
+            	}
+                if (flag_one != attndims) {
+			printf("\n -=== Dimensions in Postgresql and Query do not match  PG: %u, VLA: %u",flag_one,attndims);
+			// do an expection and redirect to attndims re-adjust 
+		}
 
                 // you times ntups with array_length to get get reserve size
                 // {{x.x},{y.y}}  be described as ntups (2) array_length (2)
