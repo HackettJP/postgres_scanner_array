@@ -15,92 +15,7 @@
 #include "duckdb/planner/filter/constant_filter.hpp"
 
 using namespace duckdb;
-char *asciidisplay(const int code, char buffer[5])
-{
-    if (code < 0)
-        buffer[0] = '\0';
-    else
-    if (code < 32) {
-        buffer[0] = '\\';
-        if (code >= 7 && code <= 13) {
-            static const char control[8] = "abtnvfr";
-            buffer[1] = control[code - 7];
-            buffer[2] = '\0';
-        } else {
-            buffer[1] = '0';
-            buffer[2] = '0' + (code / 8);
-            buffer[3] = '0' + (code % 8);
-            buffer[4] = '\0';
-        }
-    } else
-    if (code < 127) {
-        buffer[0] = code;
-        buffer[1] = '\0';
-    } else
-    if (code < 256) {
-        buffer[0] = '\\';
-        buffer[1] = '0' + ((code / 64) % 8);
-        buffer[2] = '0' + ((code / 8) % 8);
-        buffer[3] = '0' + (code % 8);
-        buffer[4] = '\0';
-    } else
-        buffer[0] = '\0';
- 
-    return (char *)buffer;
-}
 
-void HexAsciiDump(unsigned char *buf, size_t size) 
-{
-    char astra[5];
-    size_t pos,col;
-    pos = 0;
-
-    printf("\n-==\n");
-    for (size_t i = 0; i < size; ++i) 
-    {                
-        
-         printf("%02X ", buf[i]);
-        
-        if ((i+1) % 8 == 0 || i+1 == size ) // || divisable by 8 reminder 0 or size at end of buffer then 
-        {
-            printf(" ");
-            if ((i+1) % 16 == 0)   // if we on position 16 then add break then produce text
-                {
-                printf("| ");
-                for (col = 0 ; col < 16; ++col)  // do display of the single characters
-                    { 
-                    printf("%5s ",asciidisplay(buf[pos], astra));
-                    pos++;
-                    } 
-                   printf("\n");
-                }
-            else if (i+1 == size)
-                {
-                    if ((i+1) % 16 <= 8)
-                    {
-                    printf(" ");
-                    }
-                    for (col = (i+1) % 16; col < 16; ++col)  // make extra spaces to pad to "|"
-                    {
-                    printf("   ");
-                    }
-                
-                printf("| ");
-
-                    for (col = pos ; col < size; ++col)
-                    {
-                   
-                    printf("%5s ",asciidisplay(buf[pos], astra));
-                    pos++;
-                    }
-                printf("\n");  
-                } 
-                    
-        }
-
-    }
-printf("-==");
-}
 
 struct PostgresTypeInfo {
 	string typname;
@@ -245,8 +160,7 @@ static void PGExec(PGconn *conn, string q) {
 	PGQuery(conn, q, PGRES_COMMAND_OK);
 }
 
-static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, PostgresTypeInfo *ele_info, PGconn *conn,
-                               ClientContext &context) {
+static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, PostgresTypeInfo *ele_info, PGconn *conn, ClientContext &context, uint32_t attndims ) {
 	auto &pgtypename = type_info->typname;
 
 	// TODO better check, does the typtyp say something here?
@@ -311,7 +225,7 @@ static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, Postg
 }
 
 static LogicalType DuckDBType(PostgresColumnInfo &info, PGconn *conn, ClientContext &context) {
-	return DuckDBType2(&info.type_info, info.atttypmod, &info.elem_info, conn, context);
+	return DuckDBType2(&info.type_info, info.atttypmod, &info.elem_info, conn, context,info.attndims);
 }
 
 static unique_ptr<FunctionData> PostgresBind(ClientContext &context, TableFunctionBindInput &input,
@@ -709,7 +623,7 @@ static T ReadDecimal(PostgresDecimalConfig &config, const_data_ptr_t value_ptr) 
 
 static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_info, int atttypmod, int64_t typelem,
                          const PostgresTypeInfo *elem_info, const_data_ptr_t value_ptr, idx_t value_len,
-                         Vector &out_vec, idx_t output_offset) {
+                         Vector &out_vec, idx_t output_offset,uint32_t ndims,uint32_t ntups_idx,uint32_t attndims) {
 
 	switch (type.id()) {
 
@@ -919,8 +833,10 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		uint32_t value_oid;
 		uint32_t ntups;
         	uint32_t internal_position; // FOR DEBUG
+		uint32_t ntups_idx;
 		
 		D_ASSERT(elem_info);
+		D_ASSERT(attndims);
 		auto &list_entry = FlatVector::GetData<list_entry_t>(out_vec)[output_offset];
 		
 		if (value_len < 1) {
@@ -944,7 +860,8 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		 internal_position = internal_position -4;
 		D_ASSERT(value_oid == typelem);
        		ntups = 1;  // Use to start 1 * with ntups to get the matrix size
-	    	
+	    	ntups_idx = 1;
+		ndims= flag_one;	
 		if (flag_one > 1 ){
 			// Decode composite nested array in postgresql 
 			// required if NDIMS > 3 in future gen
@@ -975,13 +892,13 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                 printf("\nchild_offset                   : %u ", child_offset);
                 printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
 
-                if (flag_one > 2) {
-		throw NotImplementedException("more than 2-dimensional {{...}} Postgres arrays currently not supported, Detected %u dimensions", flag_one);
-		}			
+                if (flag_one > 4) {
+		throw NotImplementedException("\nmore than 3-dimensional {{{...}}} Postgres arrays currently not supported, Detected %u dimensions", flag_one);
+		}					
                 // only added in to allow  {{ONE,TWO}} to be accepted atm translates to {ONE,TWO,THREE} output
-		if ( ntups > 1) {  // remove this for ntups working logic {{ONE,TWO,THREE},{FOUR,FIVE,SIZE}}
-		throw NotImplementedException("more than 2-dimension matrix with 1-LIST {{ONE,TWO,THREE}} currently supported, Detected %u dimensions with ntups %u ", flag_one,flag_three);
-		}
+		if ( ntups > 3) {  // remove this for ntups working logic {{ONE,TWO,THREE},{FOUR,FIVE,SIZE}}
+		throw NotImplementedException("\nmore than 2-dimension matrix with 1-LIST {{ONE,TWO,THREE}} currently supported, Detected %u dimensions with ntups %u ", ndims,ntups);
+		
 
                 // you times ntups with array_length to get get reserve size
                 // {{x.x},{y.y}}  be described as ntups (2) array_length (2)
@@ -1003,24 +920,23 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                 auto &child_vec = ListVector::GetEntry(out_vec);
 		auto &child_mask = FlatVector::Validity(child_vec);
 
-                HexAsciiDump((unsigned char *)value_ptr,internal_position); 
-		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
+
+		for (idx_t child_idx = 0,ntups_idx=1; child_idx < array_length*ntups; child_idx++,ntups_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
 			auto ele_len = LoadEndIncrement<int32_t>(value_ptr);
 			if (ele_len == -1) { // NULL
 			child_mask.Set(child_offset + child_idx, false);
 			continue;
 			}	
-printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) ",child_offset+child_idx,child_offset,child_idx);
-printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x,x,x..} array.length       : %u",ele_len,array_length); 	 				
-			HexAsciiDump((unsigned char *)value_ptr,ele_len);
-                        ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,child_offset + child_idx);
-							value_ptr += ele_len;
+printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) length of data field (value_len)ele_len :%u ,   datafield {x,x,x..}  array.length: %u",child_offset+child_idx,child_offset,child_idx,ele_len,array_length);
+			
+                        ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,child_offset + child_idx,ndims,ntups_idx,attndims);
+			value_ptr += ele_len;
 					}
-                ListVector::SetListSize(out_vec, child_offset + array_length);
+                ListVector::SetListSize(out_vec, child_offset + (array_length*ntups));
                 list_entry.offset = child_offset;
-                list_entry.length = array_length;
-                printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u , datafield {x,x,x..} list_entry.length  : %u\n", child_offset, array_length);
+                list_entry.length = array_length*ntups;
+printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
                 break;
 
 		}
@@ -1043,7 +959,7 @@ printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x
 		printf("\nchild_offset                   : %u ", child_offset);
 		printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
 
-        	HexAsciiDump((unsigned char *)value_ptr,internal_position); 
+        	
 		ListVector::Reserve(out_vec, child_offset + array_length);
 		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
@@ -1052,8 +968,7 @@ printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x
 				child_mask.Set(child_offset + child_idx, false);
 				continue;
 			}
-printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u)",child_offset+child_idx,child_offset,child_idx);
-printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x,x,x..} array.length       : %u",ele_len,array_length); 		
+printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) length of data field (value_len)ele_len :%u ,   datafield {x,x,x..}  array.length: %u",child_offset+child_idx,child_offset,child_idx,ele_len,array_length);
 			ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,
 			             child_offset + child_idx);
 			value_ptr += ele_len;
@@ -1062,7 +977,7 @@ printf("\n-==length of data field (value_len)ele_len          :%u , datafield {x
 
 		list_entry.offset = child_offset;
 		list_entry.length = array_length;
-printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u , datafield {x,x,x..} list_entry.length  : %u\n", child_offset, array_length);
+printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
 		break;
 		}
 	}
@@ -1236,7 +1151,7 @@ static void PostgresScan(ClientContext &context, TableFunctionInput &data, DataC
 			ProcessValue(bind_data->types[col_idx], &bind_data->columns[col_idx].type_info,
 			             bind_data->columns[col_idx].atttypmod, bind_data->columns[col_idx].typelem,
 			             &bind_data->columns[col_idx].elem_info, (data_ptr_t)buf.buffer_ptr, raw_len, out_vec,
-			             output_offset);
+			             output_offset,bind_data->columns[col_idx].localndims,bind_data->columns[col_idx].nullbitmap,bind_data->columns[col_idx].attndims);
 			buf.buffer_ptr += raw_len;
 		}
 
