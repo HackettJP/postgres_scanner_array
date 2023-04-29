@@ -695,7 +695,7 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                         */
                         ptr += snprintf(ptr, macaddr_buffer_outlength, "%02X", (char *)value_ptr[i]);
 		                }
-		        FlatVector::GetData<string_t>(out_vec)[output_offset] = StringVector::AddStringOrBlob(out_vec,outputstring,macaddr_buffer_outlength);
+		        FlatVector::GetData<string_t>(out_vec)[output_offset] = StringVector::AddStringOrBlob(out_vec,outputstring,macaddr_buffer_outlength-1);
 		    break;
         }
 		FlatVector::GetData<string_t>(out_vec)[output_offset] =
