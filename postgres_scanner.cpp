@@ -938,7 +938,9 @@ printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offse
                 list_entry.offset = child_offset;
                 list_entry.length = array_length*ntups;
 printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
-                break;
+                free(dims);
+				free(lbound);
+			break;
 
 		}
 
