@@ -681,7 +681,7 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		if (type_info->typname =="macaddr")
                /// 48bit mac address should specify a type 48 and 64 bit old mac format and new 
 		            {
-                    int8_t macaddr_buffer_outlength = 12; // 6 BYTES * 2  is total VARCHAR, no null as snprintf is used
+                    int8_t macaddr_buffer_outlength = 13; // 6 BYTES * 2  is total VARCHAR,+1 for null
                         
                     if (value_len !=  sizeof(uint8_t) * 6) {
                             throw InvalidInputException("Need at least 6 bytes to read a Postgres macaddr. Got %d", value_len);
