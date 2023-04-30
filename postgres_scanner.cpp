@@ -177,10 +177,12 @@ static void PGExec(PGconn *conn, string q) {
 static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, PostgresTypeInfo *ele_info, PGconn *conn, ClientContext &context, uint32_t attndims ) {
 	auto &pgtypename = type_info->typname;
 
-	// TODO better check, does the typtyp say something here?
+	// maybe define the ARRAY SIZE HERE still pass the attndims to the LIST FUNCTION
 	// postgres array types start with an _
 	if (StringUtil::StartsWith(pgtypename, "_")) {
-		return LogicalType::LIST(DuckDBType2(ele_info, atttypmod, nullptr, conn, context));
+		auto returnLIST = LogicalType::LIST(DuckDBType2(ele_info, atttypmod, nullptr, conn, context,attndims));
+		print_logical_type_tree(returnLIST);
+		return returnLIST;
 	}
 
 	if (type_info->typtype == "e") { // ENUM
