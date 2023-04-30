@@ -865,8 +865,8 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		if (flag_one > 1 ){
 			// Decode composite nested array in postgresql 
 			// required if NDIMS > 3 in future gen
-			int *dims = (int *) malloc(flag_one * sizeof(int));
-			int *lbound = (int *) malloc(flag_one * sizeof(int));
+			std::unique_ptr<int[]> dims(new int[flag_one]);
+			std::unique_ptr<int[]> lbound(new int[flag_one]);
 
 			for (idx_t unpack = 1; unpack < flag_one; unpack++){
 				flag_three = (int)LoadEndIncrement<uint32_t>(value_ptr); 
@@ -938,8 +938,7 @@ printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offse
                 list_entry.offset = child_offset;
                 list_entry.length = array_length*ntups;
 printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
-                free(dims);
-				free(lbound);
+                
 			break;
 
 		}
