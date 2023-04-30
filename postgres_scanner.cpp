@@ -865,8 +865,8 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		if (flag_one > 1 ){
 			// Decode composite nested array in postgresql 
 			// required if NDIMS > 3 in future gen
-			std::unique_ptr<int[]> dims(new int[flag_one]);
-			std::unique_ptr<int[]> lbound(new int[flag_one]);
+			std::unique_ptr<uint32_t[]> dims(new uint32_t[flag_one]);
+			std::unique_ptr<uint32_t[]> lbound(new uint32_t[flag_one])
 
 			for (idx_t unpack = 1; unpack < flag_one; unpack++){
 				flag_three = (int)LoadEndIncrement<uint32_t>(value_ptr); 
