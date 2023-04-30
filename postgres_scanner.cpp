@@ -16,6 +16,20 @@
 
 using namespace duckdb;
 
+void print_logical_type_tree(const duckdb::LogicalType& type, int8_t indent = 0) {
+    printf("\n%*s- %s", indent, "",  type.ToString().c_str());
+     if (type.id() == duckdb::LogicalTypeId::LIST) {
+		auto child_type = ListType::GetChildType(type);
+        print_logical_type_tree(child_type, indent + 2);
+    }
+	else // recursively print child types for STRUCT types
+    if (type.id() == duckdb::LogicalTypeId::STRUCT) {
+        for (idx_t no; no < StructType::GetChildTypes(type).size(); no++) {
+			auto struct_child = ListType::GetChildType(type);
+            print_logical_type_tree(struct_child, indent + 2);
+        }
+    }
+}
 
 struct PostgresTypeInfo {
 	string typname;
@@ -926,7 +940,8 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		list_type = LogicalType::LIST(list_type); 
 		auto out_vec2 = Vector(list_type, true, false, STANDARD_VECTOR_SIZE);
 		printf("\n-= out_vec2.GetType type: %s", out_vec2.GetType().ToString().c_str());
-
+		print_logical_type_tree(list_type);
+			
 		for (idx_t child_idx = 0,ntups_idx=1; child_idx < array_length*ntups; child_idx++,ntups_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
 			auto ele_len = LoadEndIncrement<int32_t>(value_ptr);
