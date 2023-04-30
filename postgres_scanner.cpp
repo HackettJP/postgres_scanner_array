@@ -920,7 +920,10 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 				
                 auto &child_vec = ListVector::GetEntry(out_vec);
 		auto &child_mask = FlatVector::Validity(child_vec);
-
+               
+		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
+		
+		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
 
 		for (idx_t child_idx = 0,ntups_idx=1; child_idx < array_length*ntups; child_idx++,ntups_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
