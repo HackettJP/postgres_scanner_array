@@ -906,8 +906,14 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                 // {{x.x}}  be described as ntups (1) array_length (2)
             
 		ListVector::Reserve(out_vec, child_offset+(array_length*ntups));
-
-               // CREATE A LOOP 
+				
+                auto &child_vec = ListVector::GetEntry(out_vec);
+		auto &child_mask = FlatVector::Validity(child_vec);
+               
+		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
+		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
+		
+			// CREATE A LOOP 
                 // type = LogicalType::LIST(child_type);
                 // Vector list_vector(type, true, false, STANDARD_VECTOR_SIZE);
                 // example {x.x.},{y.y}  be described as ntups (2) array_length (2)
@@ -915,15 +921,11 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                 // list_vector.entry=2 , length =2,
                 // list_vector.entry= ntups ; list_vector.length =array_length;
                // END LOOP 
-                //type = LogicalType::LIST(child_type);
-                //Vector list_vector(type, true, false, STANDARD_VECTOR_SIZE);
-				
-                auto &child_vec = ListVector::GetEntry(out_vec);
-		auto &child_mask = FlatVector::Validity(child_vec);
-               
-		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
-		
-		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
+		/* create a new vector with an additional demo [] */
+		auto list_type = LogicalType::LIST(ListType::GetChildType(out_vec.GetType()));
+		list_type = LogicalType::LIST(list_type); 
+		auto out_vec2 = Vector(list_type, true, false, STANDARD_VECTOR_SIZE);
+		printf("\n-= out_vec2.GetType type: %s", out_vec2.GetType().ToString().c_str());
 
 		for (idx_t child_idx = 0,ntups_idx=1; child_idx < array_length*ntups; child_idx++,ntups_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
