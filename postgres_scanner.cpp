@@ -22,7 +22,7 @@ void print_logical_type_tree(const duckdb::LogicalType& type, int8_t indent = 0)
 		auto child_type = ListType::GetChildType(type);
         print_logical_type_tree(child_type, indent + 2);
     }
-	else // recursively print child types for STRUCT types
+	else 
     if (type.id() == duckdb::LogicalTypeId::STRUCT) {
         for (idx_t no; no < StructType::GetChildTypes(type).size(); no++) {
 			auto struct_child = ListType::GetChildType(type);
