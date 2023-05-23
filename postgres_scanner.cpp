@@ -933,7 +933,7 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                 // {{x.x},{y.y}}  be described as ntups (2) array_length (2)
                 // {{x.x}}  be described as ntups (1) array_length (2)
             
-		ListVector::Reserve(out_vec, child_offset+(array_length*ntups));
+		ListVector::Reserve(out_vec, child_offset+array_length));
 				
                 auto &child_vec = ListVector::GetEntry(out_vec);
 		auto &child_mask = FlatVector::Validity(child_vec);
