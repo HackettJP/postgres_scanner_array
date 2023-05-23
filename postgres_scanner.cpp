@@ -174,13 +174,25 @@ static void PGExec(PGconn *conn, string q) {
 	PGQuery(conn, q, PGRES_COMMAND_OK);
 }
 
+duckdb::LogicalType IncreaseLogicalTypeListDepth(const duckdb::LogicalType &logicaNlistVector,int depth)
+{
+LogicalType NestedList = logicaNlistVector;
+    for (int i = 0; i <  depth; i++) 
+    {
+    NestedList = LogicalType::LIST(NestedList);
+    }
+return NestedList;
+
+}
+
 static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, PostgresTypeInfo *ele_info, PGconn *conn, ClientContext &context, uint32_t attndims ) {
 	auto &pgtypename = type_info->typname;
 
 	// maybe define the ARRAY SIZE HERE still pass the attndims to the LIST FUNCTION
 	// postgres array types start with an _
 	if (StringUtil::StartsWith(pgtypename, "_")) {
-		auto returnLIST = LogicalType::LIST(DuckDBType2(ele_info, atttypmod, nullptr, conn, context,attndims));
+		auto returnLIST = IncreaseLogicalTypeListDepth(DuckDBType2(ele_info, atttypmod, nullptr, conn, context,attndims),attndims);
+		//auto returnLIST = LogicalType::LIST(DuckDBType2(ele_info, atttypmod, nullptr, conn, context,attndims));
 		print_logical_type_tree(returnLIST);
 		return returnLIST;
 	}
@@ -929,20 +941,7 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
 		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
 		
-			// CREATE A LOOP 
-                // type = LogicalType::LIST(child_type);
-                // Vector list_vector(type, true, false, STANDARD_VECTOR_SIZE);
-                // example {x.x.},{y.y}  be described as ntups (2) array_length (2)
-                // list_vector.entry=0 , length =2
-                // list_vector.entry=2 , length =2,
-                // list_vector.entry= ntups ; list_vector.length =array_length;
-               // END LOOP 
-		/* create a new vector with an additional demo [] */
-		auto list_type = LogicalType::LIST(ListType::GetChildType(out_vec.GetType()));
-		list_type = LogicalType::LIST(list_type); 
-		auto out_vec2 = Vector(list_type, true, false, STANDARD_VECTOR_SIZE);
-		printf("\n-= out_vec2.GetType type: %s", out_vec2.GetType().ToString().c_str());
-		print_logical_type_tree(list_type);
+
 			
 		for (idx_t child_idx = 0,ntups_idx=1; child_idx < array_length*ntups; child_idx++,ntups_idx++) {
 			// handle NULLs again (TODO: unify this with scan)
@@ -982,7 +981,9 @@ printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield 
 		printf("\narray_dim                      : %u ", array_dim);
 		printf("\nchild_offset                   : %u ", child_offset);
 		printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
-
+		
+		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
+		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
         	
 		ListVector::Reserve(out_vec, child_offset + array_length);
 		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
