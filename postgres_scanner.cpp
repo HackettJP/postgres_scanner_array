@@ -31,13 +31,130 @@ void print_logical_type_tree(const duckdb::LogicalType& type, int8_t indent = 0)
     }
 }
 
+char *asciidisplay(const int code, char buffer[5])
+{
+    if (code < 0)
+        buffer[0] = '\0';
+    else
+    if (code < 32) {
+        buffer[0] = '\\';
+        if (code >= 7 && code <= 13) {
+            static const char control[8] = "abtnvfr";
+            buffer[1] = control[code - 7];
+            buffer[2] = '\0';
+        } else {
+            buffer[1] = '0';
+            buffer[2] = '0' + (code / 8);
+            buffer[3] = '0' + (code % 8);
+            buffer[4] = '\0';
+        }
+    } else
+    if (code < 127) {
+        buffer[0] = code;
+        buffer[1] = '\0';
+    } else
+    if (code < 256) {
+        buffer[0] = '\\';
+        buffer[1] = '0' + ((code / 64) % 8);
+        buffer[2] = '0' + ((code / 8) % 8);
+        buffer[3] = '0' + (code % 8);
+        buffer[4] = '\0';
+    } else
+        buffer[0] = '\0';
+ 
+    return (char *)buffer;
+}
+
+void HexAsciiDump(unsigned char *buf, size_t size) 
+{
+    char astra[5];
+    size_t pos,col;
+    pos = 0;
+
+    printf("\n-==\n");
+    for (size_t i = 0; i < size; ++i) 
+    {                
+        
+         printf("%02X ", buf[i]);
+        
+        if ((i+1) % 8 == 0 || i+1 == size ) // || divisable by 8 reminder 0 or size at end of buffer then 
+        {
+            printf(" ");
+            if ((i+1) % 16 == 0)   // if we on position 16 then add break then produce text
+                {
+                printf("| ");
+                for (col = 0 ; col < 16; ++col)  // do display of the single characters
+                    { 
+                    printf("%5s ",asciidisplay(buf[pos], astra));
+                    pos++;
+                    } 
+                   printf("\n");
+                }
+            else if (i+1 == size)
+                {
+                    if ((i+1) % 16 <= 8)
+                    {
+                    printf(" ");
+                    }
+                    for (col = (i+1) % 16; col < 16; ++col)  // make extra spaces to pad to "|"
+                    {
+                    printf("   ");
+                    }
+                
+                printf("| ");
+
+                    for (col = pos ; col < size; ++col)
+                    {
+                   
+                    printf("%5s ",asciidisplay(buf[pos], astra));
+                    pos++;
+                    }
+                printf("\n");  
+                } 
+                    
+        }
+
+    }
+printf("==-");
+}
+
+duckdb::LogicalType IncreaseLogicalTypeListDepth(const duckdb::LogicalType &logicaNlistVector,int depth)
+{
+LogicalType NestedList = logicaNlistVector;
+    for (int i = 0; i <  depth; i++) 
+    {
+    NestedList = LogicalType::LIST(NestedList);
+    }
+return NestedList;
+
+}
+void dumpChildInfo(idx_t child_offset,idx_t child_idx,uint32_t ele_len,int32_t array_length)
+{	
+			printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) length of data field (value_len)ele_len :%u ,   datafield {x,x,x..}  array.length: %u",child_offset+child_idx,child_offset,child_idx,ele_len,array_length);
+}
+void Dumppostgresinternals(uint32_t flag_one,uint32_t flag_two,idx_t value_len, uint32_t value_oid, uint32_t internal_position , int32_t array_length, int32_t array_dim,idx_t child_offset, uint32_t ntups)
+{
+		printf("\nNdims indicator {{{..}}} no of : %u ", flag_one);
+		printf("\nNull Bitmap Flag Set           : %s ", flag_two ? "true" : "false");
+		printf("\nvalue_len                      : %u ", value_len);    
+		printf("\nvalue_oid                      : %u ", value_oid);
+		printf("\ninternal_position              : %u ", internal_position);
+		printf("\narray_length  {x,x,x..}        : %u ", array_length);  
+		printf("\narray_dim                      : %u ", array_dim);
+		printf("\nchild_offset                   : %u ", child_offset);
+		printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
+}
+void DumpinternalsVector(Vector &child_vec, Vector &out_vec)
+{
+		printf("\n-= child_vec.GetType type: %s       ", child_vec.GetType().ToString().c_str());	
+		printf("\n-= out_vec.GetType   type: %s       ", out_vec.GetType().ToString().c_str());
+}
 struct PostgresTypeInfo {
 	string typname;
 	int64_t typlen;
 	string typtype;
 	string nspname;
-	string typsend;
-	string typreceive;
+
 };
 
 struct PostgresColumnInfo {
@@ -45,12 +162,10 @@ struct PostgresColumnInfo {
 	int atttypmod;
 	PostgresTypeInfo type_info;
 	uint32_t attndims; 				// shows dimensions of array if present not enforced in catalogue only if present +1 etc
-	string	typedelim;				// delimeter  ','
 	int64_t typelem;				// OID pointer for arrays
 
 	PostgresTypeInfo elem_info;
-	uint32_t localndims = 1; 		// Used to determine dimensions in LIST Arrays default as 1
-	uint32_t nullbitmap = 0;   		// Used to determine dimensions in LIST Arrays. 
+
 };
 
 static constexpr uint32_t POSTGRES_TID_MAX = 4294967295;
@@ -174,16 +289,7 @@ static void PGExec(PGconn *conn, string q) {
 	PGQuery(conn, q, PGRES_COMMAND_OK);
 }
 
-duckdb::LogicalType IncreaseLogicalTypeListDepth(const duckdb::LogicalType &logicaNlistVector,int depth)
-{
-LogicalType NestedList = logicaNlistVector;
-    for (int i = 0; i <  depth; i++) 
-    {
-    NestedList = LogicalType::LIST(NestedList);
-    }
-return NestedList;
 
-}
 
 static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, PostgresTypeInfo *ele_info, PGconn *conn, ClientContext &context, uint32_t attndims ) {
 	auto &pgtypename = type_info->typname;
@@ -192,7 +298,6 @@ static LogicalType DuckDBType2(PostgresTypeInfo *type_info, int atttypmod, Postg
 	// postgres array types start with an _
 	if (StringUtil::StartsWith(pgtypename, "_")) {
 		auto returnLIST = IncreaseLogicalTypeListDepth(DuckDBType2(ele_info, atttypmod, nullptr, conn, context,attndims),attndims);
-		//auto returnLIST = LogicalType::LIST(DuckDBType2(ele_info, atttypmod, nullptr, conn, context,attndims));
 		print_logical_type_tree(returnLIST);
 		return returnLIST;
 	}
@@ -301,7 +406,7 @@ res = PGQuery(bind_data->conn, StringUtil::Format(
 		R"(
 		SELECT attname, atttypmod, pg_namespace.nspname,pg_type.typname, pg_type.typlen, pg_type.typtype, pg_type.typelem,
 		pg_type_elem.typname elem_typname, pg_type_elem.typlen elem_typlen, pg_type_elem.typtype elem_typtype,
-		attndims, pg_type.typsend, pg_type.typreceive, pg_type.typdelim
+		attndims
 		FROM pg_attribute
 			JOIN pg_type ON atttypid=pg_type.oid
 				LEFT JOIN pg_type pg_type_elem ON pg_type.typelem=pg_type_elem.oid
@@ -330,9 +435,7 @@ res = PGQuery(bind_data->conn, StringUtil::Format(
 		info.elem_info.typtype 	= res->GetString(row, 9); // b
 		// New stuff
 		info.attndims 				= res->GetInt32(row,10);	// Number of dimensions not enforced on more than 1 lata usage
-		info.type_info.typsend 		= res->GetString(row,11);  	// basetype or array_send
-		info.type_info.typreceive 	= res->GetString(row,12);  // basetype or array_send
-		info.typedelim 				= res->GetString(row,13);  	// delimeter  ','
+'
 
 		bind_data->names.push_back(info.attname);
 		auto duckdb_type = DuckDBType(info, bind_data->conn, context);
@@ -651,7 +754,7 @@ static T ReadDecimal(PostgresDecimalConfig &config, const_data_ptr_t value_ptr) 
 
 static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_info, int atttypmod, int64_t typelem,
                          const PostgresTypeInfo *elem_info, const_data_ptr_t value_ptr, idx_t value_len,
-                         Vector &out_vec, idx_t output_offset,uint32_t ndims,uint32_t ntups_idx,uint32_t attndims) {
+                         Vector &out_vec, idx_t output_offset,uint32_t ndims,uint32_t ntups,uint32_t attndims) {
 
 	switch (type.id()) {
 
@@ -855,17 +958,27 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 	}
 
 	case LogicalTypeId::LIST: {
-		uint32_t flag_one,flag_two;
-		uint32_t flag_three,flag_four;
-		int32_t  array_length,array_dim;
-		uint32_t value_oid;
-		uint32_t ntups;
+
         	uint32_t internal_position; // FOR DEBUG
-		uint32_t ntups_idx;
+
 		
 		D_ASSERT(elem_info);
-		D_ASSERT(attndims);
-		auto &list_entry = FlatVector::GetData<list_entry_t>(out_vec)[output_offset];
+		
+		//auto &list_entry = FlatVector::GetData<list_entry_t>(out_vec)[output_offset];
+		duckdb::list_entry_t *list_entry_ndim1; 
+		duckdb::list_entry_t *list_entry_ndim2;
+		
+		if (attndims >= 1){
+			list_entry_ndim1 = FlatVector::GetData<list_entry_t>(out_vec);
+			
+				printf("\n case 1 ");
+		}
+		if (attndims >= 2){
+			list_entry_ndim2 =  FlatVector::GetData<list_entry_t>(duckdb::ListVector::GetEntry(out_vec));
+			
+				printf("\n case 2 ");
+		}
+		duckdb::list_entry_t &list_entry = list_entry_ndim1[output_offset];
 		
 		if (value_len < 1) {
 			list_entry.offset = ListVector::GetListSize(out_vec);
@@ -875,8 +988,8 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 		D_ASSERT(value_len >= 3 * sizeof(uint32_t));
 		internal_position=value_len;  // for hex dump
 		
-		flag_one = LoadEndIncrement<uint32_t>(value_ptr);
-		flag_two = LoadEndIncrement<uint32_t>(value_ptr);
+		auto flag_one = LoadEndIncrement<uint32_t>(value_ptr);
+		auto flag_two = LoadEndIncrement<uint32_t>(value_ptr);
 		internal_position = internal_position -8;
 		if (flag_one == 0) {
 			list_entry.offset = ListVector::GetListSize(out_vec);
@@ -884,21 +997,18 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
 			return;
 		}
 		// D_ASSERT(flag_two == 1); // // this is NULL bitmap flag  .... not relevent
-		value_oid = LoadEndIncrement<uint32_t>(value_ptr);
-		 internal_position = internal_position -4;
+		auto value_oid = LoadEndIncrement<uint32_t>(value_ptr);
+		internal_position = internal_position -4;
 		D_ASSERT(value_oid == typelem);
-       		ntups = 1;  // Use to start 1 * with ntups to get the matrix size
-	    	ntups_idx = 1;
-		ndims= flag_one;	
-		if (flag_one > 1 ){
+		if (flag_one > 1 || attndims > 1 ){
 			// Decode composite nested array in postgresql 
 			// required if NDIMS > 3 in future gen
 			std::unique_ptr<uint32_t[]> dims(new uint32_t[flag_one]);
 			std::unique_ptr<uint32_t[]> lbound(new uint32_t[flag_one])
 
 			for (idx_t unpack = 1; unpack < flag_one; unpack++){
-				flag_three = (int)LoadEndIncrement<uint32_t>(value_ptr); 
-				flag_four  = (int)LoadEndIncrement<uint32_t>(value_ptr);
+				auto flag_three = LoadEndIncrement<uint32_t>(value_ptr); 
+				auto flag_four  = LoadEndIncrement<uint32_t>(value_ptr);
                          // required if NDIMS > 3 for each  {{{layer }}} will have its own associated, ntups {{},{},{}} size
 				dims[unpack] 			= flag_three;   
  				lbound[unpack]			= flag_four;    
@@ -906,19 +1016,6 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
                         // Total ntups calculation total arrays 
 				ntups = ntups * flag_three;  
 				}
-		auto child_offset   = ListVector::GetListSize(out_vec);
-		array_length   = LoadEndIncrement<uint32_t>(value_ptr);
-		array_dim      = LoadEndIncrement<uint32_t>(value_ptr);
-		internal_position   = internal_position-8;
-                printf("\nNdims indicator {{{..}}} no of : %u ", flag_one);
-                printf("\nNull Bitmap Flag Set           : %s ", flag_two ? "true" : "false");
-                printf("\nvalue_len                      : %u ", value_len);    
-                printf("\nvalue_oid                      : %u ", value_oid);
-                printf("\ninternal_position              : %u ", internal_position);
-                printf("\narray_length  {x,x,x..}        : %u ", array_length);  
-                printf("\narray_dim                      : %u ", array_dim);
-                printf("\nchild_offset                   : %u ", child_offset);
-                printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
 
                 for (idx_t j = 1 ; j < flag_one; j++)
             	{
@@ -926,64 +1023,66 @@ static void ProcessValue(const LogicalType &type, const PostgresTypeInfo *type_i
             	}
                 if (flag_one != attndims) {
 			printf("\n -=== Dimensions in Postgresql and Query do not match  PG: %u, VLA: %u",flag_one,attndims);
-			// do an expection and redirect to attndims re-adjust 
+			// throw NotImplementedException("\nMissmatch between attndims and ndims, ALTER TABLE Column to correct dimension [] Detected %u dimensions", flag_one);
 		}
 
                 // you times ntups with array_length to get get reserve size
                 // {{x.x},{y.y}}  be described as ntups (2) array_length (2)
                 // {{x.x}}  be described as ntups (1) array_length (2)
-            
-		ListVector::Reserve(out_vec, child_offset+array_length));
-				
-                auto &child_vec = ListVector::GetEntry(out_vec);
-		auto &child_mask = FlatVector::Validity(child_vec);
-               
-		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
-		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
 		
+		auto array_length = LoadEndIncrement<uint32_t>(value_ptr);
+		auto array_dim 	 = LoadEndIncrement<uint32_t>(value_ptr);
+	 	internal_position   = internal_position-8;
+            
+		auto child_offset 	= ListVector::GetListSize(out_vec);
+		auto &child_vec 	= duckdb::ListVector::GetEntry(duckdb::ListVector::GetEntry(out_vec));
+		auto &child_mask 	= FlatVector::Validity(child_vec);
 
-			
-		for (idx_t child_idx = 0,ntups_idx=1; child_idx < array_length*ntups; child_idx++,ntups_idx++) {
+		Dumppostgresinternals(flag_one,flag_two,value_len,value_oid,internal_position ,array_length,array_dim,child_offset,ntups);
+		DumpinternalsVector(child_vec,out_vec);
+		HexAsciiDump((unsigned char *)value_ptr,internal_position); 
+		ListVector::Reserve(out_vec, child_offset + array_length);
+               
+		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
+			duckdb::list_entry_t &list_entry_2 = list_entry_ndim2[child_offset+child_idx];
+			list_entry_2.offset = child_offset;  /// this be the group of the {}{}{} i guess 
+			list_entry_2.length = array_length; 
 			// handle NULLs again (TODO: unify this with scan)
 			auto ele_len = LoadEndIncrement<int32_t>(value_ptr);
 			if (ele_len == -1) { // NULL
 			child_mask.Set(child_offset + child_idx, false);
 			continue;
 			}	
-printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) length of data field (value_len)ele_len :%u ,   datafield {x,x,x..}  array.length: %u",child_offset+child_idx,child_offset,child_idx,ele_len,array_length);
-			
-                        ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,child_offset + child_idx,ndims,ntups_idx,attndims);
-			value_ptr += ele_len;
+			dumpChildInfo(child_offset,child_idx,ele_len,array_length);
+			HexAsciiDump((unsigned char *)value_ptr,ele_len);
+			ProcessValue(child_vec.GetType(), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,child_offset + child_idx,flag_one,ntups,attndims);
+							value_ptr += ele_len;
 					}
-                ListVector::SetListSize(out_vec, child_offset + (array_length*ntups));
+		printf("\n-==SetListSize (OUT_VEC) elements.offset  ROW          :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
+		printf("\n Before Reserve  %lu",duckdb::ListVector::GetListSize(out_vec));
+		printf("\n Set listvector setlistsize ntups %u, child_offset %u, array_length %u ",ntups,child_offset,array_length);
+		ListVector::SetListSize(out_vec, child_offset+array_length);
+                ListVector::SetListSize(duckdb::ListVector::GetEntry(out_vec),child_offset+array_length);
                 list_entry.offset = child_offset;
-                list_entry.length = array_length*ntups;
-printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
-                
+                list_entry.length = ntups;
+
 			break;
 
 		}
 
 		else
 		{
-		array_length = LoadEndIncrement<uint32_t>(value_ptr);
-		array_dim = LoadEndIncrement<uint32_t>(value_ptr);
+		auto array_length = LoadEndIncrement<uint32_t>(value_ptr);
+		auto array_dim 	 = LoadEndIncrement<uint32_t>(value_ptr);
         	internal_position = internal_position-8;
-       		auto child_offset = ListVector::GetListSize(out_vec);
-		auto &child_vec = ListVector::GetEntry(out_vec);
-		auto &child_mask = FlatVector::Validity(child_vec);
-		printf("\nNdims indicator {{{..}}} no of : %u ", flag_one);
-		printf("\nNull Bitmap Flag Set           : %s ", flag_two ? "true" : "false");
-		printf("\nvalue_len                      : %u ", value_len);    
-		printf("\nvalue_oid                      : %u ", value_oid);
-		printf("\ninternal_position              : %u ", internal_position);
-		printf("\narray_length  {x,x,x..}        : %u ", array_length);  
-		printf("\narray_dim                      : %u ", array_dim);
-		printf("\nchild_offset                   : %u ", child_offset);
-		printf("\nntups  no of {},{},{} we in{..}: %d ", ntups);
-		
-		printf("\n-=child_vec.GetType type: %s", child_vec.GetType().ToString().c_str());	
-		printf("\n-=out_vec.GetType   type: %s", out_vec.GetType().ToString().c_str());
+       	
+		auto child_offset 	= ListVector::GetListSize(out_vec);
+		auto &child_vec 	= ListVector::GetEntry(out_vec);
+		auto &child_mask 	= FlatVector::Validity(child_vec);
+
+		Dumppostgresinternals(flag_one,flag_two,value_len,value_oid,internal_position ,array_length,array_dim,child_offset,ntups);
+		DumpinternalsVector(child_vec,out_vec);
+        	HexAsciiDump((unsigned char *)value_ptr,internal_position);
         	
 		ListVector::Reserve(out_vec, child_offset + array_length);
 		for (idx_t child_idx = 0; child_idx < array_length; child_idx++) {
@@ -993,16 +1092,18 @@ printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield 
 				child_mask.Set(child_offset + child_idx, false);
 				continue;
 			}
-printf("\n-==target (Child_VEC) child_offset.output_offset    :%u , (child_offset.offset : %u + child_idx   : %u) length of data field (value_len)ele_len :%u ,   datafield {x,x,x..}  array.length: %u",child_offset+child_idx,child_offset,child_idx,ele_len,array_length);
-			ProcessValue(ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,
-			             child_offset + child_idx);
+			dumpChildInfo(child_offset,child_idx,ele_len,array_length);
+			HexAsciiDump((unsigned char *)value_ptr,ele_len);
+			ProcessValue( ListType::GetChildType(type), elem_info, atttypmod, 0, nullptr, value_ptr, ele_len, child_vec,child_offset + child_idx,flag_one,ntups,attndims);
 			value_ptr += ele_len;
 		}
-		ListVector::SetListSize(out_vec, child_offset + array_length);
-
+				printf("\n-==SetListSize (OUT_VEC) elements.offset  ROW          :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
+		printf("\n Before Reserve  %lu",duckdb::ListVector::GetListSize(out_vec));
+		printf("\n Set listvector setlistsize ntups %u, child_offset %u, array_length %u ",ntups,child_offset,array_length);
+		ListVector::SetListSize(out_vec, child_offset+array_length);
 		list_entry.offset = child_offset;
 		list_entry.length = array_length;
-printf("\n-==SetListSize (OUT_VEC) elements.offset            :%u ,   datafield {x,x,x..}   list_entry.length: %u\n", child_offset, array_length);
+		printf("\n After Reserve Single  %lu",duckdb::ListVector::GetListSize(out_vec));
 		break;
 		}
 	}
@@ -1173,10 +1274,13 @@ static void PostgresScan(ClientContext &context, TableFunctionInput &data, DataC
 				FlatVector::Validity(out_vec).Set(output_offset, false);
 				continue;
 			}
-			ProcessValue(bind_data->types[col_idx], &bind_data->columns[col_idx].type_info,
-			             bind_data->columns[col_idx].atttypmod, bind_data->columns[col_idx].typelem,
-			             &bind_data->columns[col_idx].elem_info, (data_ptr_t)buf.buffer_ptr, raw_len, out_vec,
-			             output_offset,bind_data->columns[col_idx].localndims,bind_data->columns[col_idx].nullbitmap,bind_data->columns[col_idx].attndims);
+			ProcessValue(bind_data.types[col_idx], &bind_data.columns[col_idx].type_info,
+			             bind_data.columns[col_idx].atttypmod, bind_data.columns[col_idx].typelem,
+			             &bind_data.columns[col_idx].elem_info, (data_ptr_t)buf.buffer_ptr, raw_len, out_vec,
+			             output_offset,
+						 bind_data.columns[col_idx].ndims,
+						 bind_data.columns[col_idx].ntups,
+						 bind_data.columns[col_idx].attndims);
 			buf.buffer_ptr += raw_len;
 		}
 
